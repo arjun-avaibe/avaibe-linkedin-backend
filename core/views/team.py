@@ -1,0 +1,113 @@
+"""Team management (admins only): who may sign in, their role, and who can switch accounts."""
+
+from typing import Literal
+
+from django.contrib.sessions.models import Session
+from pydantic import BaseModel, Field, field_validator
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+from .. import settings_store
+from ..api import NO_CONTENT, fail, parse
+from ..auth import default_account_id, require
+from ..models import Account, User
+from ..timeutil import as_utc
+
+Role = Literal["viewer", "editor", "approver", "admin"]
+
+
+class MemberIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    name: str | None = Field(default=None, max_length=200)
+    role: Role = "viewer"
+    can_switch_accounts: bool = False
+    active: bool = True
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "@" not in v or v.startswith("@") or v.endswith("@") or " " in v:
+            raise ValueError("Enter a valid work email address")
+        return v
+
+
+class DefaultAccountIn(BaseModel):
+    default_account_id: int
+
+
+def _out(u: User) -> dict:
+    return {
+        "id": u.id,
+        "email": u.email,
+        "name": u.name,
+        "role": u.role,
+        "can_switch_accounts": u.role == "admin" or u.can_switch_accounts,
+        "active": u.is_active,
+        "last_login_at": as_utc(u.last_login).isoformat() if u.last_login else None,
+    }
+
+
+def _active_admins(excluding: int | None = None) -> int:
+    qs = User.objects.filter(role="admin", is_active=True)
+    if excluding is not None:
+        qs = qs.exclude(id=excluding)
+    return qs.count()
+
+
+def _sign_out_everywhere(user_id: int) -> None:
+    for s in Session.objects.all():
+        if s.get_decoded().get("_auth_user_id") == str(user_id):
+            s.delete()
+
+
+@api_view(["GET", "POST"])
+def members(request):
+    require(request.user, "admin")
+    if request.method == "GET":
+        return Response({"members": [_out(u) for u in User.objects.order_by("email")], "default_account_id": default_account_id()})
+    body = parse(MemberIn, request.data)
+    if User.objects.filter(email__iexact=body.email).exists():
+        fail(409, "This person is already on the team")
+    u = User.objects.create_user(
+        body.email, name=body.name, role=body.role, can_switch_accounts=body.can_switch_accounts, is_active=body.active
+    )
+    return Response(_out(u), status=201)
+
+
+@api_view(["PUT", "DELETE"])
+def member_detail(request, user_id: int):
+    require(request.user, "admin")
+    u = User.objects.filter(id=user_id).first()
+    if not u:
+        fail(404, "Team member not found")
+
+    if request.method == "DELETE":
+        if u.role == "admin" and u.is_active and _active_admins(excluding=u.id) == 0:
+            fail(400, "You can't remove the last admin")
+        _sign_out_everywhere(u.id)
+        u.delete()
+        return Response(status=NO_CONTENT)
+
+    body = parse(MemberIn, request.data)
+    losing_admin = u.role == "admin" and u.is_active and (body.role != "admin" or not body.active)
+    if losing_admin and _active_admins(excluding=u.id) == 0:
+        fail(400, "There must always be at least one active admin")
+    if User.objects.filter(email__iexact=body.email).exclude(id=u.id).exists():
+        fail(409, "Another team member already uses this email")
+    u.email, u.name, u.role = body.email, body.name, body.role
+    u.can_switch_accounts, u.is_active = body.can_switch_accounts, body.active
+    u.save()
+    if not u.is_active:
+        _sign_out_everywhere(u.id)
+    return Response(_out(u))
+
+
+@api_view(["PUT"])
+def set_default_account(request):
+    require(request.user, "admin")
+    body = parse(DefaultAccountIn, request.data)
+    if not Account.objects.filter(id=body.default_account_id).exists():
+        fail(404, "Account not found")
+    settings_store.save("access", {"default_account_id": body.default_account_id})
+    return Response({"default_account_id": body.default_account_id})

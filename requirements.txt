@@ -1,0 +1,18 @@
+Django>=6.1,<6.2
+djangorestframework>=3.18,<4
+dj-database-url>=3.1
+whitenoise>=6.12
+psycopg[binary]>=3.3
+python-dotenv>=1.2
+httpx>=0.28
+cryptography>=50
+msal>=1.39
+pydantic>=2.14,<3
+# zoneinfo on Windows has no system time-zone database; tzdata supplies Asia/Dubai, Asia/Kolkata, Europe/London
+tzdata>=2026.1
+anthropic>=2.8
+# Reading LinkedIn page-analytics exports: .xls (the format LinkedIn uses) and .xlsx
+xlrd>=2.0
+openpyxl>=3.1
+# Production web server (hosting on Render)
+gunicorn>=23
