@@ -20,13 +20,13 @@ snapshot someone typed in by hand, or a format/topic/time someone has set.
 import io
 import re
 from collections.abc import Iterable
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from django.db import transaction
 
 from . import topics
-from .models import PAGE_DAILY_FIELDS, Account, PageAudience, PageDaily, Post, Snapshot
+from .models import PAGE_DAILY_FIELDS, Account, AccountDoc, PageAudience, PageDaily, Post, Snapshot
 from .timeutil import from_uae_local
 
 EXPORT_NOTE = "From LinkedIn export"
@@ -168,15 +168,27 @@ def _checkpoint_for_age(days: int) -> str | None:
     return None
 
 
-def _upsert_daily(account: Account, by_day: dict[date, dict[str, int | None]]) -> int:
+def _upsert_daily(account: Account, by_day: dict[date, dict[str, int | None]]) -> dict[str, int]:
+    """One row per (account, day): a day already stored is updated, never added twice.
+    Counts what really changed, so importing the same file again reports "unchanged"."""
+    existing = {row.date: row for row in PageDaily.objects.filter(account=account, date__in=list(by_day))}
+    new = changed = same = 0
     for d, values in by_day.items():
         values = {k: v for k, v in values.items() if k in PAGE_DAILY_FIELDS}
+        row = existing.get(d)
+        if row is None:
+            new += 1
+        elif all(getattr(row, k) == v for k, v in values.items()):
+            same += 1
+            continue
+        else:
+            changed += 1
         PageDaily.objects.update_or_create(account=account, date=d, defaults=values)
-    return len(by_day)
+    return {"days_saved": len(by_day), "days_new": new, "days_changed": changed, "days_unchanged": same}
 
 
 def _import_posts(account: Account, rows: Iterable[dict[str, Any]], exported_on: date) -> dict[str, Any]:
-    created = updated = snapshots = kept_manual = too_new = 0
+    created = updated = unchanged = snapshots = kept_manual = too_new = 0
     errors: list[str] = []
     captured_at = from_uae_local(datetime.combine(exported_on, time(12, 0)))
     for i, r in enumerate(rows, start=1):
@@ -199,6 +211,16 @@ def _import_posts(account: Account, rows: Iterable[dict[str, Any]], exported_on:
         if post and post.account_id != account.id:
             errors.append(f"Post {i}: this link is already stored under another account, skipped")
             continue
+        existed = post is not None
+        row_changed = False  # for a post already stored: did anything about it change?
+
+        def tally(changed: bool) -> None:
+            nonlocal updated, unchanged
+            if existed:
+                if changed:
+                    updated += 1
+                else:
+                    unchanged += 1
         if post is None:
             s = topics.suggest(caption or "")
             post = Post.objects.create(
@@ -228,15 +250,17 @@ def _import_posts(account: Account, rows: Iterable[dict[str, Any]], exported_on:
                 post.caption, changed = caption, True
             if changed:
                 post.save()
-            updated += 1
+            row_changed = changed
 
         cp = _checkpoint_for_age((exported_on - posted).days)
         if cp is None:
             too_new += 1
+            tally(row_changed)
             continue
         existing = Snapshot.objects.filter(post=post, checkpoint=cp).first()
         if existing and not (existing.notes or "").startswith(EXPORT_NOTE):
             kept_manual += 1
+            tally(row_changed)
             continue
         views = _int(r.get("Views"))
         metrics = {
@@ -253,11 +277,15 @@ def _import_posts(account: Account, rows: Iterable[dict[str, Any]], exported_on:
             f"{EXPORT_NOTE} of {exported_on:%d %b %Y}: totals since posting "
             f"({(exported_on - posted).days} days), stored as the {cp} figure."
         )
-        Snapshot.objects.update_or_create(post=post, checkpoint=cp, defaults={**metrics, "captured_at": captured_at, "notes": note})
-        snapshots += 1
+        numbers_changed = existing is None or any(getattr(existing, k) != v for k, v in metrics.items())
+        if numbers_changed:
+            Snapshot.objects.update_or_create(post=post, checkpoint=cp, defaults={**metrics, "captured_at": captured_at, "notes": note})
+            snapshots += 1
+        tally(row_changed or numbers_changed)
     return {
         "posts_created": created,
-        "posts_updated": updated,
+        "posts_updated": updated,  # already stored, and something changed (usually newer numbers)
+        "posts_unchanged": unchanged,  # already stored, identical: re-importing the same file adds nothing
         "snapshots_saved": snapshots,
         "snapshots_kept_manual": kept_manual,
         "posts_too_new": too_new,
@@ -283,6 +311,10 @@ def _import_demographics(account: Account, sheets: dict[str, list[list[Any]]], a
     # The export has no overall total. Use the largest dimension total: complete lists such as
     # seniority add up to (nearly) everyone, while location lists only the top 100 places.
     total = max(sum(n for _, n in vals) for vals in found.values())
+    # One breakdown per (account, export date, followers/visitors): the same export replaces itself, never doubles
+    before = set(PageAudience.objects.filter(account=account, as_of=as_of, audience=audience).values_list("dimension", "value", "count"))
+    after = {(dim, v, n) for dim, vals in found.items() for v, n in vals}
+    status = "new" if not before else "unchanged" if before == after else "changed"
     PageAudience.objects.filter(account=account, as_of=as_of, audience=audience).delete()
     PageAudience.objects.bulk_create(
         [
@@ -291,7 +323,12 @@ def _import_demographics(account: Account, sheets: dict[str, list[list[Any]]], a
             for v, n in vals
         ]
     )
-    return {"demographic_rows": sum(len(v) for v in found.values()), "demographic_total": total, "as_of": as_of.isoformat()}
+    return {
+        "demographic_rows": sum(len(v) for v in found.values()),
+        "demographic_total": total,
+        "demographic_status": status,
+        "as_of": as_of.isoformat(),
+    }
 
 
 def import_file(account: Account, filename: str, data: bytes, exported_on: date | None) -> dict[str, Any]:
@@ -322,11 +359,11 @@ def import_file(account: Account, filename: str, data: bytes, exported_on: date 
                         "comments": _int(r.get("Comments (total)")),
                         "reposts": _int(r.get("Reposts (total)")),
                     }
-                result["days_saved"] = _upsert_daily(account, by_day)
+                result.update(_upsert_daily(account, by_day))
             result.update(_import_posts(account, _table(sheets["All posts"], "Post title"), as_of))
         elif kind == "followers":
             by_day = {_date(r["Date"]): {"new_followers": _int(r.get("Total followers"))} for r in _table(sheets["New followers"], "Date")}
-            result["days_saved"] = _upsert_daily(account, by_day)
+            result.update(_upsert_daily(account, by_day))
             result.update(_import_demographics(account, sheets, "followers", "Total followers", as_of))
         elif kind == "visitors":
             by_day = {
@@ -336,7 +373,17 @@ def import_file(account: Account, filename: str, data: bytes, exported_on: date 
                 }
                 for r in _table(sheets["Visitor metrics"], "Date")
             }
-            result["days_saved"] = _upsert_daily(account, by_day)
+            result.update(_upsert_daily(account, by_day))
             # Visitor demographics count page VIEWS over the export period, not people
             result.update(_import_demographics(account, sheets, "visitors", "Total views", as_of))
+        _record_import(account, kind, filename, as_of)
     return result
+
+
+LAST_IMPORTS = "last_imports"  # AccountDoc kind: when each export type was last imported (shown on the Data tabs)
+
+
+def _record_import(account: Account, kind: str, filename: str, as_of: date) -> None:
+    doc, _ = AccountDoc.objects.get_or_create(account=account, kind=LAST_IMPORTS, defaults={"data": {}})
+    doc.data = {**(doc.data or {}), kind: {"at": datetime.now(UTC).isoformat(), "exported_on": as_of.isoformat(), "file": filename}}
+    doc.save(update_fields=["data", "updated_at"])

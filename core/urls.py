@@ -17,6 +17,7 @@ urlpatterns = [
     path("accounts/<int:account_id>/page-audience", page_audience.page_audience),
     path("accounts/<int:account_id>/page-daily", page_audience.page_daily),
     path("accounts/<int:account_id>/docs/<str:kind>", docs.account_doc),
+    path("accounts/<int:account_id>/last-imports", imports.last_imports),
     # posts
     path("posts", posts.posts),
     path("posts/<int:post_id>", posts.post_detail),

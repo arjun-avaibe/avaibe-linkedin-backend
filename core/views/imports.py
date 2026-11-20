@@ -15,13 +15,18 @@ from rest_framework.response import Response
 from .. import linkedin_export
 from ..api import fail, int_param
 from ..auth import check_account, require
-from ..models import CHECKPOINT_HOURS, Account, Post, Snapshot
+from ..models import CHECKPOINT_HOURS, Account, AccountDoc, PageAudience, Post, Snapshot
 from ..schemas import METRIC_FIELDS, PostIn, SnapshotIn
-from ..timeutil import now_utc
+from ..timeutil import as_utc, now_utc, to_uae
 
 POST_COLUMNS = ["post_url", "published_at_uae", "format", "topic", "industry", "keywords", "cta", "hashtags", "author", "caption"]
 SNAPSHOT_COLUMNS = ["checkpoint", "captured_at_uae"] + METRIC_FIELDS
 TEMPLATE_COLUMNS = POST_COLUMNS + SNAPSHOT_COLUMNS
+# Column headings that only appear in LinkedIn's page-analytics exports (content, followers, visitors)
+LINKEDIN_EXPORT_HEADINGS = (
+    "Post title", "Post link", "Impressions (total)", "Total followers", "Total page views (total)",
+    "Total unique visitors (total)", "Total views", "Job function", "Company size",
+)
 
 
 def _split(v: str, on_spaces: bool = False) -> list[str]:
@@ -131,6 +136,13 @@ def import_linkedin_export(request):
     uploads = request.FILES.getlist("files")
     if not uploads:
         fail(422, "Attach at least one exported file")
+    # Every export this importer reads comes from a company page; into a profile only when someone confirms it
+    if account.kind != "company" and str(request.data.get("confirm_profile", "")).lower() not in {"1", "true", "yes"}:
+        fail(
+            409,
+            f"{account.name} is a {account.kind} profile, but LinkedIn page exports come from a company page. "
+            "Switch to the company page, or confirm to import into this profile anyway.",
+        )
     exported_on = None
     if request.data.get("exported_on"):
         try:
@@ -166,7 +178,18 @@ def import_csv(request):
     except UnicodeDecodeError:
         text = raw.decode("cp1252")
     reader = csv.DictReader(io.StringIO(text))
-    missing = {"published_at_uae", "format"} - set(reader.fieldnames or [])
+    headers = set(reader.fieldnames or [])
+    if not {"published_at_uae", "format"} <= headers:
+        # A LinkedIn export re-saved as CSV loses its sheet names: point to the original Excel file instead
+        top = " ".join(text.splitlines()[:5])
+        if any(m in top for m in LINKEDIN_EXPORT_HEADINGS):
+            fail(
+                400,
+                "This looks like a LinkedIn analytics export saved as CSV. Upload the original Excel file (.xls) "
+                "under “LinkedIn page export” above instead: it has the sheets the app needs to tell posts, "
+                "followers and visitors apart.",
+            )
+    missing = {"published_at_uae", "format"} - headers
     if missing:
         fail(400, f"Missing required columns: {sorted(missing)}")
 
@@ -184,3 +207,26 @@ def import_csv(request):
         updated += outcome == "updated"
         snapshots += snap_saved
     return Response({"posts_created": created, "posts_updated": updated, "snapshots_saved": snapshots, "errors": errors})
+
+
+@api_view(["GET"])
+def last_imports(request, account_id: int):
+    """When each LinkedIn export type (content, followers, visitors) was last imported for this account."""
+    check_account(request.user, account_id)
+    doc = AccountDoc.objects.filter(account_id=account_id, kind=linkedin_export.LAST_IMPORTS).first()
+    out = dict(doc.data) if doc else {}
+    # Imports from before this was recorded: work out the export date from the data itself (import time unknown)
+    if "content" not in out:
+        snap = (
+            Snapshot.objects.filter(post__account_id=account_id, notes__startswith=linkedin_export.EXPORT_NOTE)
+            .order_by("-captured_at")
+            .first()
+        )
+        if snap:
+            out["content"] = {"at": None, "exported_on": to_uae(as_utc(snap.captured_at)).date().isoformat(), "file": None}
+    for kind in ("followers", "visitors"):
+        if kind not in out:
+            latest = PageAudience.objects.filter(account_id=account_id, audience=kind).order_by("-as_of").first()
+            if latest:
+                out[kind] = {"at": None, "exported_on": latest.as_of.isoformat(), "file": None}
+    return Response(out)

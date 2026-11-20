@@ -13,7 +13,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import analytics, linkedin_export, topics
-from .models import Account, PageAudience, PageDaily, Post, Snapshot
+from .models import Account, AccountDoc, PageAudience, PageDaily, Post, Snapshot
 
 EXPORTED = date(2026, 11, 16)
 
@@ -108,10 +108,24 @@ class ExportImportTests(TestCase):
         Snapshot.objects.filter(post=p).update(impressions=999, notes="typed in by hand")
 
         r = self._import(content_file([_post(link, "08/20/2026", "", "Some caption about AI", impressions=300)]))
-        self.assertEqual((r["posts_created"], r["posts_updated"], r["snapshots_kept_manual"]), (0, 1, 1))
+        # The hand-typed numbers win, so nothing about the post changed
+        self.assertEqual((r["posts_created"], r["posts_updated"], r["posts_unchanged"], r["snapshots_kept_manual"]), (0, 0, 1, 1))
         p.refresh_from_db()
         self.assertEqual((p.format, p.topic, p.topic_suggested), ("carousel", "My topic", False))
         self.assertEqual(p.snapshot_items.get().impressions, 999)
+
+    def test_same_file_twice_is_reported_unchanged_and_adds_nothing(self):
+        link = "https://www.linkedin.com/feed/update/urn:li:activity:11"
+        first = self._import(content_file([_post(link, "08/20/2026", "Video", "x", impressions=100)]))
+        self.assertEqual((first["posts_created"], first["posts_updated"], first["posts_unchanged"]), (1, 0, 0))
+        again = self._import(content_file([_post(link, "08/20/2026", "Video", "x", impressions=100)]))
+        self.assertEqual((again["posts_created"], again["posts_updated"], again["posts_unchanged"], again["snapshots_saved"]), (0, 0, 1, 0))
+        self.assertEqual((again["days_new"], again["days_changed"], again["days_unchanged"]), (0, 0, again["days_saved"]))
+        newer = self._import(content_file([_post(link, "08/20/2026", "Video", "x", impressions=180)]))
+        self.assertEqual((newer["posts_created"], newer["posts_updated"], newer["posts_unchanged"]), (0, 1, 0))
+        self.assertEqual((Post.objects.count(), Snapshot.objects.count()), (1, 1))  # never doubled
+        last = AccountDoc.objects.get(account=self.acc, kind="last_imports").data
+        self.assertEqual(last["content"]["exported_on"], "2026-11-16")
 
     def test_reimport_updates_export_snapshot(self):
         link = "https://www.linkedin.com/feed/update/urn:li:activity:10"
@@ -131,6 +145,10 @@ class ExportImportTests(TestCase):
         self.assertEqual((r["kind"], r["days_saved"], r["demographic_rows"], r["demographic_total"]), ("followers", 1, 4, 400))
         self.assertEqual(PageDaily.objects.get(date=date(2026, 8, 17)).new_followers, 6)
         self.assertEqual(PageAudience.objects.get(audience="followers", value="Dubai, United Arab Emirates").count, 88)
+        self.assertEqual(r["demographic_status"], "new")
+        again = self._import(followers, "avaibe_followers_1794812611016.xls")
+        self.assertEqual((again["days_unchanged"], again["demographic_status"]), (1, "unchanged"))
+        self.assertEqual(PageAudience.objects.filter(audience="followers").count(), 4)  # replaced, not doubled
 
         visitors = _xlsx({
             "Visitor metrics": [["Date", "Total page views (total)", "Total unique visitors (total)"], ["08/17/2026", 9, 4]],
@@ -187,6 +205,32 @@ class AnalyticsWithImportedPostsTests(TestCase):
             self.assertFalse(p.topic_suggested)
             self.assertFalse(p.time_known)  # the edit form doesn't send it, so it stays date-only
             self.assertEqual(p.format, "image")
+
+    def test_linkedin_export_saved_as_csv_gets_a_clear_message(self):
+        client = APIClient()
+        with mock.patch("core.auth.auth_enabled", return_value=False):
+            f = io.BytesIO(b"Date,Total followers,Organic followers" + bytes([10]) + b"11/01/2026,5,5" + bytes([10]))
+            f.name = "followers.csv"
+            res = client.post(f"/api/import/csv?account_id={self.acc.id}", {"file": f}, format="multipart")
+            self.assertEqual(res.status_code, 400, res.content)
+            self.assertIn("original Excel file", res.content.decode())
+
+    def test_company_export_into_a_profile_needs_confirmation(self):
+        founder = Account.objects.create(name="Founder", kind="founder", parent=self.acc)
+        client = APIClient()
+
+        def upload(**extra):
+            f = io.BytesIO(content_file([_post("https://www.linkedin.com/feed/update/urn:li:activity:88", "08/21/2026", "", "Hello")]))
+            f.name = "avaibe_content_1794812594179.xls"
+            return client.post(f"/api/import/linkedin-export?account_id={founder.id}", {"files": [f], **extra}, format="multipart")
+
+        with mock.patch("core.auth.auth_enabled", return_value=False):
+            res = upload()
+            self.assertEqual(res.status_code, 409, res.content)
+            self.assertFalse(Post.objects.filter(account=founder).exists())  # nothing saved without a yes
+            res = upload(confirm_profile="1")
+            self.assertEqual(res.status_code, 200, res.content)
+            self.assertEqual(Post.objects.filter(account=founder).count(), 1)
 
 
 class SuggestionDecisionTests(TestCase):
