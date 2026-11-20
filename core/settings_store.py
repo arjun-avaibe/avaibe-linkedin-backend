@@ -29,6 +29,10 @@ DEFAULTS: dict[str, dict[str, Any]] = {
             "ceo", "founder", "owner", "principal", "head of school", "director", "managing director",
             "general manager", "cto", "cio", "chairman", "president",
         ],
+        # LinkedIn job functions that count as technology professionals (CTOs, IT managers, engineers, consultants)
+        "tech_functions": ["engineering", "information technology"],
+        # LinkedIn job functions that count as potential partners (consultants, business development, agencies)
+        "partner_functions": ["business development", "consulting"],
     },
     "performance": {
         "min_history": 8,  # posts needed before labelling against a baseline
@@ -89,6 +93,8 @@ class SegmentsIn(BaseModel):
     education_industry: list[str] = Field(min_length=1, max_length=100)
     decision_seniority: list[str] = Field(max_length=100)
     decision_titles: list[str] = Field(max_length=100)
+    tech_functions: list[str] = Field(default_factory=lambda: ["engineering", "information technology"], max_length=100)
+    partner_functions: list[str] = Field(default_factory=lambda: ["business development", "consulting"], max_length=100)
 
     @field_validator("*")
     @classmethod

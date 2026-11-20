@@ -27,6 +27,8 @@ def describe() -> dict[str, str]:
         "uae": "Located in the UAE (country entry, or the sum of UAE city entries)",
         "education": f"Industry contains: {', '.join(c['education_industry'])}",
         "decision_maker": "Seniority matches the decision-maker list (or job title if no seniority data)",
+        "tech": f"Job function contains: {', '.join(c.get('tech_functions', []))}",
+        "partner": f"Job function contains: {', '.join(c.get('partner_functions', []))}",
     }
 
 
@@ -67,9 +69,20 @@ def decision_maker_share(rows: list[tuple[str, str, float]]) -> float | None:
     return s if s is not None else _share(rows, "job_title", c["decision_titles"])
 
 
+def tech_share(rows: list[tuple[str, str, float]]) -> float | None:
+    return _share(rows, "job_function", _cfg().get("tech_functions", []))
+
+
+def partner_share(rows: list[tuple[str, str, float]]) -> float | None:
+    return _share(rows, "job_function", _cfg().get("partner_functions", []))
+
+
 def all_shares(rows: list[tuple[str, str, float]]) -> dict[str, float | None]:
     return {
         "uae_share": uae_share(rows),
         "education_share": education_share(rows),
         "decision_maker_share": decision_maker_share(rows),
+        # The other audience groups AVAIBE tracks (by job function); groups overlap, so they don't add up to 100%
+        "tech_share": tech_share(rows),
+        "partner_share": partner_share(rows),
     }
