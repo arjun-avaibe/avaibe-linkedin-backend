@@ -136,6 +136,12 @@ class PageAudienceIn(BaseModel):
 PlannedFormat = Literal["text", "image", "carousel", "video", "article", "poll"]
 
 
+class CarouselSlide(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    headline: str = Field(default="", max_length=120)
+    body: str = Field(default="", max_length=400)
+
+
 class PlannedDetails(BaseModel):
     """Format-specific fields. Only the ones that belong to the post's format are kept."""
 
@@ -143,6 +149,10 @@ class PlannedDetails(BaseModel):
 
     # carousel
     document_title: str | None = Field(default=None, max_length=100)
+    # carousel built in the app: the slides and their look (the PDF itself is made in the browser and uploaded as media)
+    slides: list[CarouselSlide] | None = Field(default=None, max_length=20)
+    carousel_theme: Literal["brand", "dark", "light"] | None = None
+    carousel_accent: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     # video
     subtitles: bool | None = None
     # article / newsletter
@@ -169,7 +179,7 @@ class PlannedDetails(BaseModel):
 FORMAT_DETAIL_FIELDS = {
     "text": set(),
     "image": set(),
-    "carousel": {"document_title"},
+    "carousel": {"document_title", "slides", "carousel_theme", "carousel_accent"},
     "video": {"subtitles"},
     "article": {"title", "link"},
     "poll": {"question", "options", "duration"},
