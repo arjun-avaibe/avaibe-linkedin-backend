@@ -41,6 +41,7 @@ urlpatterns = [
     # Claude
     path("ai/ideas", ai.ideas),
     path("ai/post-assist", ai.post_assist),
+    path("ai/compare-posts", ai.compare_posts),
     path("ai/post-chat", ai.post_chat),
     path("ai/ideas/<int:run_id>/<int:index>/draft", ai.idea_to_draft),
     # CSV import

@@ -29,3 +29,6 @@ staticfiles/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Made-up audience proportions: generated from the private calibration file, kept local like it
+mock_data/calibration_synthetic.json

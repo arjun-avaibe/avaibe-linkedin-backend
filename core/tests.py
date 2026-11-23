@@ -753,6 +753,44 @@ class PostAssistTests(TestCase):
 
 
 
+class ComparePostsAITests(TestCase):
+    def setUp(self):
+        from datetime import datetime, timezone
+
+        from .models import Post, Snapshot
+
+        self.acc = Account.objects.create(name="AVAIBE", kind="company")
+        self.client = APIClient()
+        self.posts = []
+        for i, imp in enumerate((300, 40)):
+            p = Post.objects.create(account=self.acc, published_at=datetime(2026, 11, 10 + i, 8, tzinfo=timezone.utc), format="image", caption=f"Hook {i}\nBody", hashtags=["#UAE"])
+            Snapshot.objects.create(post=p, checkpoint="24h", impressions=imp, clicks=3, captured_at=p.published_at)
+            self.posts.append(p)
+
+    def test_needs_claude_and_sends_both_posts(self):
+        from core import ai
+
+        body = {"account_id": self.acc.id, "post_ids": [p.id for p in self.posts], "checkpoint": "24h"}
+        with mock.patch("core.auth.auth_enabled", return_value=False):
+            with mock.patch("core.ai.configured", return_value=False):
+                self.assertEqual(self.client.post("/api/ai/compare-posts", body, format="json").status_code, 400)
+            self.assertEqual(self.client.post("/api/ai/compare-posts", {**body, "post_ids": [self.posts[0].id]}, format="json").status_code, 422)
+            seen = {}
+
+            def fake(account, posts, checkpoint, typical, email):
+                seen.update(posts=posts, checkpoint=checkpoint)
+                from core.models import AIRun
+
+                return AIRun.objects.create(account=account, kind="post_assist", status="ok", model="m", result={"summary": "ok"})
+
+            with mock.patch("core.ai.compare_posts", side_effect=fake):
+                r = self.client.post("/api/ai/compare-posts", body, format="json")
+            self.assertEqual(r.status_code, 201, r.content)
+            self.assertEqual(seen["checkpoint"], "24h")
+            self.assertEqual(sorted(p["numbers"]["impressions"] for p in seen["posts"]), [40, 300])
+            self.assertTrue(all(p["caption"].startswith("Hook") for p in seen["posts"]))
+
+
 class PostChatOpeningTests(TestCase):
     def setUp(self):
         self.acc = Account.objects.create(name="AVAIBE", kind="company")

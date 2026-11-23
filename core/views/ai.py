@@ -200,3 +200,53 @@ def _attachment(request) -> dict | None:
     """The post's image or carousel PDF, if the page sent one (raises AIError for unreadable files)."""
     upload = request.FILES.get("attachment")
     return ai.read_attachment(upload) if upload else None
+
+
+class ComparePostsIn(BaseModel):
+    account_id: int
+    post_ids: list[int] = Field(min_length=2, max_length=4)
+    checkpoint: Literal["1h", "6h", "24h", "48h", "7d"]
+
+
+@api_view(["POST"])
+def compare_posts(request):
+    """Compare posts → Ask AI why (only on click)."""
+    from statistics import median
+
+    from ..models import Post, Snapshot
+    from ..timeutil import slot_label, to_uae
+
+    user = request.user
+    require(user, "editor")
+    body = parse(ComparePostsIn, request.data)
+    account = Account.objects.filter(id=body.account_id).first()
+    if not account:
+        fail(404, "Account not found")
+    check_account(user, account.id)
+    posts = list(Post.objects.filter(id__in=body.post_ids, account=account))
+    if len(posts) != len(set(body.post_ids)):
+        fail(404, "Some of these posts weren't found in this account")
+    snaps = {s.post_id: s for s in Snapshot.objects.filter(post__in=posts, checkpoint=body.checkpoint)}
+    peers = [s.impressions for s in Snapshot.objects.filter(post__account=account, checkpoint=body.checkpoint, impressions__isnull=False)]
+    typical = median(peers) if len(peers) >= 5 else None
+    data = []
+    for p in posts:
+        s = snaps.get(p.id)
+        local = to_uae(as_utc(p.published_at))
+        data.append({
+            "id": p.ref or f"Post {p.id}",
+            "posted_uae": local.strftime("%A %Y-%m-%d %H:%M") if p.time_known else local.strftime("%A %Y-%m-%d (time unknown)"),
+            "slot_uae": slot_label(local) if p.time_known else None,
+            "format": p.format,
+            "topic": p.topic,
+            "goal": p.goal,
+            "hashtags": p.hashtags,
+            "targeted": p.targeted,
+            "numbers": {k: getattr(s, k) for k in ("impressions", "members_reached", "clicks", "reactions", "comments", "reposts", "followers_gained", "video_views")} if s else None,
+            "caption": (p.caption or "")[:3000],
+        })
+    try:
+        run = ai.compare_posts(account, data, body.checkpoint, typical, None if user.dev else user.email)
+    except ai.AIError as e:
+        fail(400, str(e))
+    return Response(_run_out(run), status=201)
