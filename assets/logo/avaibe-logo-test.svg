@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B3D91"/>
+      <stop offset="1" stop-color="#1C7ED6"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="400" rx="84" fill="url(#bg)"/>
+  <!-- "A" monogram, raised slightly to make room for the TEST tag -->
+  <path d="M120 270 L200 84 L280 270" fill="none" stroke="#FFFFFF" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M142 210 Q171 183 200 210 T258 210" fill="none" stroke="#8FD8FF" stroke-width="18" stroke-linecap="round"/>
+  <!-- TEST tag -->
+  <rect x="138" y="306" width="124" height="46" rx="23" fill="#FAB219"/>
+  <text x="200" y="338" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="4" fill="#0B0B0B">TEST</text>
+</svg>

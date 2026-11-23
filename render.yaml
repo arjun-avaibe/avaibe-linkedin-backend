@@ -1,0 +1,30 @@
+# Render Blueprint: the Django API for the hosted DEMO (synthetic data only).
+# In Render: New → Blueprint → pick this repository. Values marked sync: false are typed in Render's dashboard,
+# never committed. See DEPLOY.md.
+services:
+  - type: web
+    name: avaibe-linkedin-demo
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    # Free plan has no pre-deploy step, so database changes are applied at start (safe to repeat)
+    startCommand: python manage.py migrate --noinput && gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+    healthCheckPath: /api/auth/me
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.7
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL # Neon connection string (Neon → Connect → copy). Typed in Render, never committed.
+        sync: false
+      - key: ALLOWED_HOSTS
+        value: .onrender.com,.vercel.app
+      - key: CORS_ORIGINS # the Vercel address, e.g. https://avaibe-linkedin-demo.vercel.app
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: BEHIND_PROXY
+        value: "true"

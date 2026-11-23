@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B3D91"/>
+      <stop offset="1" stop-color="#1C7ED6"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="400" rx="84" fill="url(#bg)"/>
+  <!-- "A" monogram -->
+  <path d="M112 302 L200 98 L288 302" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- wave crossbar: the "vibe" -->
+  <path d="M136 236 Q168 206 200 236 T264 236" fill="none" stroke="#8FD8FF" stroke-width="20" stroke-linecap="round"/>
+</svg>

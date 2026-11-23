@@ -1,0 +1,31 @@
+# ---- Secrets: never commit. Only the *.env.example templates go in.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Real AVAIBE data stays on this laptop (the hosted demo uses synthetic data only)
+*.xls
+*.xlsx
+*.csv
+*.docx
+mock_data/calibration_demographics.json
+uploads/
+*.sql
+*.dump
+
+# ---- Python
+.venv/
+__pycache__/
+*.pyc
+*.db
+staticfiles/
+
+# ---- Editors / OS
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
