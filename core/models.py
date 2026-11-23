@@ -52,6 +52,8 @@ class Account(models.Model):
 
 class Post(models.Model):
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="post_items")
+    # Readable ID (P-0042): the same one the post had as a draft, if it was planned in the app
+    ref = models.CharField(max_length=20, unique=True, null=True, blank=True)
     post_url = models.CharField(max_length=500, unique=True, null=True, blank=True)
     linkedin_post_id = models.CharField(max_length=100, null=True, blank=True)
     author = models.CharField(max_length=200, null=True, blank=True)
@@ -62,6 +64,8 @@ class Post(models.Model):
     # Audience: True = targeted to a subset (location, seniority…), False = all followers, None = unknown (manual/export)
     targeted = models.BooleanField(null=True, blank=True)
     format = models.CharField(max_length=20, choices=FORMAT_CHOICES, db_index=True)
+    # What the post aims for (chosen on Create post); empty for posts from before, imports and hand-added posts
+    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("leads", "Leads"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True, db_index=True)
     topic = models.CharField(max_length=200, null=True, blank=True)
     # True when the topic was guessed from the caption on import and nobody has confirmed it yet
     topic_suggested = models.BooleanField(default=False)
@@ -81,6 +85,10 @@ class Post(models.Model):
     def __str__(self) -> str:
         return f"{self.topic or 'Post'} · {self.published_at:%Y-%m-%d}"
 
+    def save(self, *args, **kwargs):
+        if not self.ref:
+            self.ref = next_post_ref()
+        super().save(*args, **kwargs)
 
 class Snapshot(models.Model):
     """Performance of one post at one checkpoint. Metrics are nullable: "not recorded" is not zero."""
@@ -384,6 +392,8 @@ class PlannedPost(models.Model):
     STATUS_CHOICES = [(s, s) for s in PLANNED_STATUSES]
 
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="planned_items")
+    # Readable ID (P-0042), kept when the post is published and tracked in Data
+    ref = models.CharField(max_length=20, unique=True, null=True, blank=True)
     # text | image | carousel | video | article | poll. Only text and image can be published by the app today;
     # the others are drafted and approved here, posted by hand, then marked as posted.
     format = models.CharField(max_length=20, default="text", db_index=True)
@@ -398,6 +408,8 @@ class PlannedPost(models.Model):
     visibility = models.CharField(max_length=20, default="PUBLIC")  # PUBLIC | CONNECTIONS
     scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True)
+    # What the post aims for: required on Create post (older drafts may be empty until edited)
+    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("leads", "Leads"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True)
     topic = models.CharField(max_length=200, null=True, blank=True)
     industry = models.CharField(max_length=200, null=True, blank=True)
     cta = models.CharField(max_length=300, null=True, blank=True)
@@ -419,6 +431,10 @@ class PlannedPost(models.Model):
     def __str__(self) -> str:
         return f"{self.status}: {self.caption[:40]}"
 
+    def save(self, *args, **kwargs):
+        if not self.ref:
+            self.ref = next_post_ref()
+        super().save(*args, **kwargs)
 
 class Lead(models.Model):
     """An enquiry or business conversation, recorded by the team (LinkedIn's API doesn't provide these).
@@ -470,3 +486,42 @@ class Lead(models.Model):
 
     def __str__(self) -> str:
         return f"{self.company} ({self.stage})"
+
+
+# ---- Post IDs: one readable ID per post (P-0042), from the first draft to its numbers in Data.
+# Planned posts and tracked posts draw from one counter, so an ID never means two posts.
+# A post published from a draft carries the draft's ID; a post that only came from a LinkedIn import gets its own.
+
+REF_PREFIX = "P-"
+
+
+class Counter(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+    value = models.PositiveIntegerField(default=0)
+
+
+def next_post_ref() -> str:
+    from django.db import transaction
+
+    with transaction.atomic():
+        c, _ = Counter.objects.select_for_update().get_or_create(name="post_ref")
+        c.value += 1
+        c.save(update_fields=["value"])
+        return f"{REF_PREFIX}{c.value:04d}"
+
+
+def assign_missing_refs() -> int:
+    """Give an ID to every post that has none (rows added in bulk, e.g. by import_legacy). Oldest first."""
+    n = 0
+    for p in PlannedPost.objects.filter(ref__isnull=True).order_by("created_at", "id"):
+        p.ref = next_post_ref()
+        p.save(update_fields=["ref"])
+        if p.post_id and not Post.objects.filter(ref=p.ref).exists():
+            Post.objects.filter(id=p.post_id, ref__isnull=True).update(ref=p.ref)
+        n += 1
+    for post in Post.objects.filter(ref__isnull=True).order_by("published_at", "id"):
+        planned = PlannedPost.objects.filter(post_id=post.id).exclude(ref__isnull=True).first()
+        post.ref = planned.ref if planned and not Post.objects.filter(ref=planned.ref).exists() else next_post_ref()
+        post.save(update_fields=["ref"])
+        n += 1
+    return n

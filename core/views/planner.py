@@ -13,11 +13,11 @@ from .. import publisher
 from ..api import NO_CONTENT, fail, int_param, parse
 from ..appconf import UPLOAD_DIR
 from ..auth import allowed_account_ids, check_account, require
-from ..models import AUTO_PUBLISH_FORMATS, PLANNED_FORMATS, Account, PlannedPost, Post
+from ..models import AUTO_PUBLISH_FORMATS, PLANNED_FORMATS, Account, LinkedInConnection, PlannedPost, Post
 from ..schemas import PlannedPostIn, normalise_hashtags
 from ..timeutil import as_utc, now_utc, slot_label, to_uae
 
-EDITABLE = {"draft", "failed", "missed"}
+EDITABLE = {"draft", "approved", "failed", "missed"}  # saving an approved post sends it back for approval
 IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 # Files kept for review before posting by hand: format -> (allowed types, max size, label)
@@ -37,10 +37,14 @@ def _out(p: PlannedPost) -> dict[str, Any]:
     sched = as_utc(p.scheduled_at) if p.scheduled_at else None
     return {
         "id": p.id,
+        "ref": p.ref,
         "account_id": p.account_id,
         "format": p.format,
         # Carousel, video, article and poll posts are posted by hand, then marked as posted
         "manual": p.format not in AUTO_PUBLISH_FORMATS,
+        # Posted by hand: a hand-posted format, or an account the app can't post to (no LinkedIn connection,
+        # e.g. the company page until LinkedIn grants page posting). At its time the team is reminded instead.
+        "by_hand": p.format not in AUTO_PUBLISH_FORMATS or not LinkedInConnection.objects.filter(account_id=p.account_id).exists(),
         "details": p.details or {},
         "has_media": bool(p.media_file),
         "media_name": p.media_name,
@@ -53,6 +57,7 @@ def _out(p: PlannedPost) -> dict[str, Any]:
         "scheduled_day_uae": to_uae(sched).strftime("%A") if sched else None,
         "scheduled_slot_uae": slot_label(to_uae(sched)) if sched else None,
         "status": p.status,
+        "goal": p.goal,
         "topic": p.topic,
         "industry": p.industry,
         "cta": p.cta,
@@ -134,7 +139,7 @@ def planned_detail(request, planned_id: int):
     body = parse(PlannedPostIn, request.data)
     check_account(user, body.account_id)
     if p.status not in EDITABLE:
-        fail(409, f"A post that is '{p.status}' can't be edited. Un-approve it first.")
+        fail(409, f"A post that is '{p.status}' can't be edited.")
     for k, v in _fields(body).items():
         setattr(p, k, v)
     # Files that don't belong to the new format are removed, so they can't be posted by mistake
@@ -249,7 +254,7 @@ def mark_posted(request, planned_id: int):
     require(request.user, "approver")
     p = _get(planned_id, request.user)
     if p.status != "approved":
-        fail(409, "Only approved posts can be marked as posted")
+        fail(409, "Publish it first (preview → Publish copies the text), then mark it as posted")
     body = parse(MarkPostedIn, request.data)
     m = re.search(r"activity[:-](\d{10,})", body.post_url)
     if "linkedin.com" not in body.post_url or not m:
@@ -261,12 +266,14 @@ def mark_posted(request, planned_id: int):
     post = Post.objects.filter(post_url=url).first() or Post.objects.filter(account_id=p.account_id, linkedin_post_id=activity).first()
     if post is None:
         post = Post.objects.create(
+            ref=p.ref,  # same ID as the draft
             account_id=p.account_id,
             post_url=url,
             linkedin_post_id=activity,
             author=p.account.name,
             published_at=published,
             format=PLANNED_FORMATS[p.format],
+            goal=p.goal,
             topic=p.topic,
             industry=p.industry,
             keywords=p.keywords or [],
@@ -277,6 +284,10 @@ def mark_posted(request, planned_id: int):
         )
     elif post.account_id != p.account_id:
         fail(409, "That LinkedIn post is already tracked under another account")
+    elif post.ref != p.ref:
+        # Already tracked (e.g. from a LinkedIn export): it takes the draft's ID, so the post keeps one ID
+        post.ref = p.ref
+        post.save(update_fields=["ref"])
     p.status = "published"
     p.published_at = post.published_at or published
     p.linkedin_urn = f"urn:li:activity:{activity}"
@@ -292,9 +303,12 @@ def approve(request, planned_id: int):
     require(request.user, "approver")
     p = _get(planned_id, request.user)
     if p.status not in EDITABLE:
-        fail(409, f"A post that is '{p.status}' can't be approved")
-    if p.scheduled_at and as_utc(p.scheduled_at) <= now_utc():
-        fail(400, "The scheduled time has already passed. Pick a new time or clear it and use Publish now.")
+        fail(409, f"A post that is '{p.status}' can't be published")
+    # "approved" = scheduled: the app publishes it at its time. Publishing straight away ("now") doesn't need a future time.
+    if p.scheduled_at and as_utc(p.scheduled_at) <= now_utc() and not request.data.get("now"):
+        fail(400, "The scheduled time has already passed. Pick a new time, or use Publish now.")
+    if request.data.get("now"):
+        p.scheduled_at = now_utc()  # going out now, not at the planned time
     p.status = "approved"
     p.approved_at = now_utc()
     p.error = None
@@ -308,7 +322,7 @@ def unapprove(request, planned_id: int):
     require(request.user, "approver")
     p = _get(planned_id, request.user)
     if p.status != "approved":
-        fail(409, f"A post that is '{p.status}' isn't approved")
+        fail(409, f"A post that is '{p.status}' isn't scheduled")
     _clear_approval(p)
     p.save()
     return Response(_out(p))

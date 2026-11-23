@@ -16,12 +16,12 @@ from .models import Post
 from .timeutil import now_utc
 
 FORMAT_NAMES = {
-    "image": "single image",
-    "carousel": "PDF carousel",
+    "image": "image",
+    "carousel": "carousel",
     "video": "video",
     "poll": "poll",
-    "newsletter": "newsletter / article",
-    "text": "text-only",
+    "newsletter": "article",
+    "text": "text",
     "untagged": "untagged",
 }
 
@@ -122,7 +122,7 @@ def build(posts: list[Post]) -> dict[str, Any]:
             risk="None for reach. A wrong label would only mislead the analysis, so check rather than guess.",
             confidence={"level": "high", "reason": "A data requirement, not a prediction."},
             measure={"metric": "Untagged posts and unconfirmed topics", "period": "This week", "target": "Zero"},
-            action={"label": "Fix now", "to": "/posts?review=needs"},
+            action={"label": "Fix now", "to": "/data?tab=posts"},
             progress={
                 "done": len(posts) - sum(1 for p in posts if p.format == "untagged" or p.topic_suggested),
                 "total": len(posts),

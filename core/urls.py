@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from .views import accounts, ai, analytics, auth, calendar, decisions, docs, images, imports, leads, linkedin, page_audience, planner, posts, settings, team
+from .views import accounts, ai, analytics, auth, calendar, decisions, docs, imports, leads, linkedin, page_audience, planner, posts, settings, team
 
 urlpatterns = [
     path("health", auth.health),
@@ -42,11 +42,6 @@ urlpatterns = [
     path("ai/ideas", ai.ideas),
     path("ai/post-assist", ai.post_assist),
     path("ai/post-chat", ai.post_chat),
-    path("ai/carousel", ai.write_carousel),
-    path("images/status", images.status),
-    path("images/generate", images.generate),
-    path("images/slide", images.slide),
-    path("images/<int:run_id>/<int:index>", images.image),
     path("ai/ideas/<int:run_id>/<int:index>/draft", ai.idea_to_draft),
     # CSV import
     path("import/template", imports.template),

@@ -165,12 +165,14 @@ def publish(planned_id: int) -> PlannedPost:
 
     published = now_utc()
     post = Post.objects.create(
+        ref=p.ref,  # same ID as the draft
         account_id=p.account_id,
         post_url=li.post_url(urn),
         linkedin_post_id=urn,
         author=conn.name,
         published_at=published,
         format="image" if p.format == "image" and p.image_file else "text",
+        goal=p.goal,
         topic=p.topic,
         industry=p.industry,
         keywords=p.keywords or [],
@@ -194,9 +196,11 @@ def run_due() -> None:
     now = now_utc()
     not_waiting = Q(retry_at__isnull=True) | Q(retry_at__lte=now)
     # Due by schedule, or a busy retry whose waiting time is over (including busy "Publish now" posts)
-    # Hand-posted formats (carousel, video, article, poll) are never picked up: their date is for planning only
+    # Hand-posted formats (carousel, video, article, poll) are never picked up: their date is for planning only.
+    # Nor are accounts the app can't post to (no LinkedIn connection): the team is reminded to post those by hand.
     due = PlannedPost.objects.filter(
-        Q(status="approved") & Q(format__in=AUTO_PUBLISH_FORMATS) & not_waiting & (Q(scheduled_at__lte=now) | Q(attempts__gt=0))
+        Q(status="approved") & Q(format__in=AUTO_PUBLISH_FORMATS) & Q(account__linkedin_connection__isnull=False) & not_waiting
+        & (Q(scheduled_at__lte=now) | Q(attempts__gt=0))
     )
     for p in due:
         if p.attempts == 0 and now - as_utc(p.scheduled_at) > timedelta(minutes=PUBLISH_GRACE_MINUTES):

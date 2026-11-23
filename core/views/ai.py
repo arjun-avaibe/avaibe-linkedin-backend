@@ -1,7 +1,8 @@
 """Claude endpoints: generate and read strategy ideas, turn a post idea into a draft."""
 
 import json
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from rest_framework.decorators import api_view
@@ -81,10 +82,12 @@ def idea_to_draft(request, run_id: int, index: int):
     caption = (idea.get("draft_caption") or "").strip()
     if not caption:
         fail(400, "This idea has no draft caption")
+    goal = {"leads": "leads", "sales": "sales", "brand": "brand"}.get(idea.get("type") or "", "engagement")
     p = PlannedPost.objects.create(
         account_id=run.account_id,
         caption=caption[:3000],
         topic=(idea.get("title") or "")[:200] or None,
+        goal=goal,
         status="draft",
     )
     return Response({"planned_id": p.id}, status=201)
@@ -97,7 +100,13 @@ class PostAssistIn(BaseModel):
     topic: str | None = Field(default=None, max_length=200)
     industry: str | None = Field(default=None, max_length=200)
     cta: str | None = Field(default=None, max_length=300)
+    goal: Literal["brand", "leads", "sales", "engagement"] | None = None
     instructions: str | None = Field(default=None, max_length=500)
+    # The parts of the post to review, picked after clicking Analyse
+    focus: list[Literal["text", "visual", "timing", "poll"]] = Field(default_factory=lambda: ["text"], min_length=1, max_length=4)
+    scheduled_at: datetime | None = None  # the chosen posting time, for the timing review
+    details: dict[str, Any] = Field(default_factory=dict)  # poll question and options, titles (format details)
+    media_attached: bool = False  # an image, PDF or video is attached to the post (videos aren't sent: the AI can't watch them)
 
 
 @api_view(["GET", "POST"])
@@ -113,15 +122,15 @@ def post_assist(request):
             "daily_limit": ai.POST_ASSIST_DAILY_LIMIT,
         })
     require(user, "editor")  # costs money: editors and above
-    body = parse(PostAssistIn, _form_data(request))
+    body = parse(PostAssistIn, _form_data(request, ("focus", "details")))
     account = Account.objects.filter(id=body.account_id).first()
     if not account:
         fail(404, "Account not found")
     check_account(user, account.id)
-    draft = body.model_dump(include={"format", "caption", "topic", "industry", "cta"})
+    draft = body.model_dump(include={"format", "caption", "topic", "industry", "cta", "goal", "scheduled_at", "details", "media_attached"})
     try:
         attachment = _attachment(request)
-        run = ai.post_assist(account, draft, (body.instructions or "").strip() or None, None if user.dev else user.email, attachment)
+        run = ai.post_assist(account, draft, (body.instructions or "").strip() or None, None if user.dev else user.email, attachment, list(dict.fromkeys(body.focus)))
     except ai.AIError as e:
         fail(400, str(e))
     return Response(_run_out(run), status=201)
@@ -139,6 +148,7 @@ class PostChatIn(BaseModel):
     topic: str | None = Field(default=None, max_length=200)
     industry: str | None = Field(default=None, max_length=200)
     cta: str | None = Field(default=None, max_length=300)
+    goal: Literal["brand", "leads", "sales", "engagement"] | None = None
     messages: list[ChatMessageIn] = Field(default_factory=list, max_length=ai.POST_CHAT_MAX_MESSAGES)
     web_search: bool = False  # the team's per-message switch: look things up on the web first (costs a little more)
 
@@ -162,7 +172,7 @@ def post_chat(request):
     if not account:
         fail(404, "Account not found")
     check_account(user, account.id)
-    draft = body.model_dump(include={"format", "caption", "topic", "industry", "cta"})
+    draft = body.model_dump(include={"format", "caption", "topic", "industry", "cta", "goal"})
     history = [m.model_dump() for m in body.messages]
     try:
         attachment = _attachment(request)
@@ -190,32 +200,3 @@ def _attachment(request) -> dict | None:
     """The post's image or carousel PDF, if the page sent one (raises AIError for unreadable files)."""
     upload = request.FILES.get("attachment")
     return ai.read_attachment(upload) if upload else None
-
-
-
-class CarouselIn(BaseModel):
-    account_id: int
-    caption: str = Field(default="", max_length=3500)
-    topic: str | None = Field(default=None, max_length=200)
-    industry: str | None = Field(default=None, max_length=200)
-    cta: str | None = Field(default=None, max_length=300)
-    instructions: str | None = Field(default=None, max_length=500)
-    slide_count: int = Field(default=7, ge=3, le=12)
-
-
-@api_view(["POST"])
-def write_carousel(request):
-    """Create post → carousel → Write slides with AI (only on click)."""
-    user = request.user
-    require(user, "editor")
-    body = parse(CarouselIn, request.data)
-    account = Account.objects.filter(id=body.account_id).first()
-    if not account:
-        fail(404, "Account not found")
-    check_account(user, account.id)
-    draft = {"format": "carousel", **body.model_dump(include={"caption", "topic", "industry", "cta"})}
-    try:
-        run = ai.write_carousel(account, draft, body.slide_count, (body.instructions or "").strip() or None, None if user.dev else user.email)
-    except ai.AIError as e:
-        fail(400, str(e))
-    return Response(_run_out(run), status=201)

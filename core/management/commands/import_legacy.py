@@ -136,6 +136,11 @@ class Command(BaseCommand):
                                                                             LinkedInConnection, PlannedPost, User]):
                     cur.execute(stmt)
 
+            # Bulk-created rows skip save(): give every post its readable ID (P-0042)
+            from core.models import assign_missing_refs
+
+            assign_missing_refs()
+
         settings_store.invalidate()
 
         # Uploaded images for the publishing queue

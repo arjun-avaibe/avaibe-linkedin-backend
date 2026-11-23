@@ -61,6 +61,7 @@ def _posts_for(acc: Account, start: date, end: date) -> list[dict[str, Any]]:
         out.append(
             {
                 "id": p.id,
+                "ref": p.ref,
                 "account_id": acc.id,
                 "account_name": acc.name,
                 "account_kind": acc.kind,
@@ -123,6 +124,7 @@ def calendar(request):
             planned.append(
                 {
                     "id": p.id,
+                    "ref": p.ref,
                     "date": local.date().isoformat(),
                     "time": local.strftime("%H:%M"),
                     "slot": slot_label(local),

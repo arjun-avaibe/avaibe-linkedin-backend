@@ -53,6 +53,7 @@ def post_summary(p: Post) -> dict[str, Any]:
     uae = to_uae(p.published_at)
     return {
         "id": p.id,
+        "ref": p.ref,
         "account_id": p.account_id,
         "post_url": p.post_url,
         "linkedin_post_id": p.linkedin_post_id,
@@ -67,6 +68,7 @@ def post_summary(p: Post) -> dict[str, Any]:
         "format": p.format,
         "topic": p.topic,
         "topic_suggested": p.topic_suggested,
+        "goal": p.goal,
         "industry": p.industry,
         "keywords": p.keywords or [],
         "cta": p.cta,
