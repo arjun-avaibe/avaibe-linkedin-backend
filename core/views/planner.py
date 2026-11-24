@@ -200,7 +200,7 @@ def planned_image(request, planned_id: int):
 
 @api_view(["GET", "POST", "DELETE"])
 def planned_media(request, planned_id: int):
-    """The carousel PDF or video, kept so the approver can review it before someone posts it by hand."""
+    """The carousel PDF or video, kept so the team can review it before someone posts it by hand."""
     user = request.user
     p = _get(planned_id, user)
     if request.method == "GET":
@@ -251,7 +251,7 @@ class MarkPostedIn(BaseModel):
 @api_view(["POST"])
 def mark_posted(request, planned_id: int):
     """After an approved post was put on LinkedIn by hand: record it, and start tracking it with the right format."""
-    require(request.user, "approver")
+    require(request.user, "editor")
     p = _get(planned_id, request.user)
     if p.status != "approved":
         fail(409, "Publish it first (preview → Publish copies the text), then mark it as posted")
@@ -300,7 +300,7 @@ def mark_posted(request, planned_id: int):
 
 @api_view(["POST"])
 def approve(request, planned_id: int):
-    require(request.user, "approver")
+    require(request.user, "editor")
     p = _get(planned_id, request.user)
     if p.status not in EDITABLE:
         fail(409, f"A post that is '{p.status}' can't be published")
@@ -319,7 +319,7 @@ def approve(request, planned_id: int):
 
 @api_view(["POST"])
 def unapprove(request, planned_id: int):
-    require(request.user, "approver")
+    require(request.user, "editor")
     p = _get(planned_id, request.user)
     if p.status != "approved":
         fail(409, f"A post that is '{p.status}' isn't scheduled")
@@ -331,7 +331,7 @@ def unapprove(request, planned_id: int):
 @api_view(["POST"])
 def publish_now(request, planned_id: int):
     """Publishes immediately. The post must already be approved."""
-    require(request.user, "approver")
+    require(request.user, "editor")
     p = _get(planned_id, request.user)
     if p.format not in AUTO_PUBLISH_FORMATS:
         fail(409, "The app can't publish this format yet. Post it on LinkedIn by hand, then use Mark as posted.")

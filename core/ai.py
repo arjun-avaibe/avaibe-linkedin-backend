@@ -432,8 +432,7 @@ def post_context(account: Account) -> str:
 
 GOAL_TEXT = {
     "brand": "Brand awareness: get AVAIBE known to relevant UAE audiences",
-    "leads": "Leads: bring in enquiries (comments, DMs, demo requests)",
-    "sales": "Sales: move people already talking to AVAIBE towards a deal",
+    "sales": "Sales: bring in enquiries (comments, DMs, demo requests) and move people towards a deal",
     "engagement": "Engagement: start conversations and grow the community",
 }
 

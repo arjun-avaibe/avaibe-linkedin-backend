@@ -196,7 +196,7 @@ class PlannedPostIn(BaseModel):
     # Naive = UAE time. None = not scheduled (publish manually)
     scheduled_at: datetime | None = None
     # Required: what the post aims for (Brand awareness, Leads, Sales or Engagement)
-    goal: Literal["brand", "leads", "sales", "engagement"]
+    goal: Literal["brand", "sales", "engagement"]
     topic: str | None = Field(default=None, max_length=200)
     industry: str | None = Field(default=None, max_length=200)
     cta: str | None = Field(default=None, max_length=300)

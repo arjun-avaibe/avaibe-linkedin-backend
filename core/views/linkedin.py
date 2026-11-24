@@ -60,7 +60,7 @@ def connections(request):
 @api_view(["GET"])
 def auth_url(request):
     user = request.user
-    require(user, "approver")
+    require(user, "editor")
     if not linkedin_configured():
         fail(400, "LinkedIn isn't configured: add the client ID, secret and encryption key to server/.env")
     account_id = int_param(request, "account_id", required=True)
@@ -137,7 +137,7 @@ def callback(request):
 def disconnect(request, account_id: int):
     """Removes the stored token. To fully revoke, also remove the app under
     LinkedIn Settings → Data privacy → Permitted services."""
-    require(request.user, "approver")
+    require(request.user, "editor")
     check_account(request.user, account_id)
     LinkedInConnection.objects.filter(account_id=account_id).delete()
     return Response(status=NO_CONTENT)

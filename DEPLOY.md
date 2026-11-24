@@ -14,7 +14,9 @@ Vercel forwards `/api/...` to Render, so the browser only ever talks to the Verc
 
 > Limits to know: Render's free server sleeps after ~15 minutes idle, so the first visit after a pause takes
 > 30–60 s. Vercel's free (Hobby) plan is meant for personal, non-commercial use. The demo runs without
-> sign-in (local mode), so anyone with the link can view **and edit** the demo data; re-run step 3 to reset it.
+> sign-in (local mode), so `render.yaml` sets `READ_ONLY_WITHOUT_SIGNIN=true`: the API then refuses every change
+> (anyone can view, nobody can edit). Re-run step 3 to reload the data. Once Microsoft sign-in is set up, roles
+> apply instead: Viewer < Editor < Approver < Admin < Super admin.
 
 ## 1. GitHub
 Both repositories already exist and are pushed (pranav161203/avaibe-linkedin-backend and

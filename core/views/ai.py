@@ -82,7 +82,7 @@ def idea_to_draft(request, run_id: int, index: int):
     caption = (idea.get("draft_caption") or "").strip()
     if not caption:
         fail(400, "This idea has no draft caption")
-    goal = {"leads": "leads", "sales": "sales", "brand": "brand"}.get(idea.get("type") or "", "engagement")
+    goal = {"leads": "sales", "sales": "sales", "brand": "brand"}.get(idea.get("type") or "", "engagement")  # Leads isn't a post goal: it counts as Sales
     p = PlannedPost.objects.create(
         account_id=run.account_id,
         caption=caption[:3000],
@@ -100,7 +100,7 @@ class PostAssistIn(BaseModel):
     topic: str | None = Field(default=None, max_length=200)
     industry: str | None = Field(default=None, max_length=200)
     cta: str | None = Field(default=None, max_length=300)
-    goal: Literal["brand", "leads", "sales", "engagement"] | None = None
+    goal: Literal["brand", "sales", "engagement"] | None = None
     instructions: str | None = Field(default=None, max_length=500)
     # The parts of the post to review, picked after clicking Analyse
     focus: list[Literal["text", "visual", "timing", "poll"]] = Field(default_factory=lambda: ["text"], min_length=1, max_length=4)
@@ -148,7 +148,7 @@ class PostChatIn(BaseModel):
     topic: str | None = Field(default=None, max_length=200)
     industry: str | None = Field(default=None, max_length=200)
     cta: str | None = Field(default=None, max_length=300)
-    goal: Literal["brand", "leads", "sales", "engagement"] | None = None
+    goal: Literal["brand", "sales", "engagement"] | None = None
     messages: list[ChatMessageIn] = Field(default_factory=list, max_length=ai.POST_CHAT_MAX_MESSAGES)
     web_search: bool = False  # the team's per-message switch: look things up on the web first (costs a little more)
 

@@ -46,6 +46,11 @@ def linkedin_configured() -> bool:
     return bool(LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY)
 
 
+def read_only_without_signin() -> bool:
+    """Hosted demo with sign-in off: refuse every change (read live so tests can switch it)."""
+    return os.getenv("READ_ONLY_WITHOUT_SIGNIN", "").strip().lower() in ("1", "true", "yes")
+
+
 def auth_enabled() -> bool:
     # Read live so tests can switch it per run
     return bool(os.getenv("MS_TENANT_ID") and os.getenv("MS_CLIENT_ID") and os.getenv("MS_CLIENT_SECRET"))

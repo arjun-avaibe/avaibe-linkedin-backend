@@ -4,11 +4,13 @@
   (httpOnly cookie, server-side session row).
 - Invite-only: a Microsoft account can sign in only if an admin added that email on the Team page
   (or it is listed in ADMIN_EMAILS, which bootstraps the first admins).
-- Roles: viewer < editor < approver < admin.
+- Roles: viewer < editor < admin < superadmin. Editors write, schedule and publish. Admins manage viewers and editors;
+  only super admins manage admins and super admins. Nobody changes their own role.
 - Account access: people without "can switch accounts" (and not admins) only see the default account.
   Enforced on every API call, not just hidden in the UI.
-- Local mode: until Microsoft sign-in is configured, every request acts as an admin so the app stays
-  usable on a laptop. The UI shows that sign-in is off.
+- Local mode: until Microsoft sign-in is configured, every request acts as a super admin so the app stays
+  usable on a laptop. The UI shows that sign-in is off. With READ_ONLY_WITHOUT_SIGNIN=true (the hosted demo),
+  local mode can only read: every change is refused, so nobody can alter data on an open server.
 """
 
 from dataclasses import dataclass, field
@@ -18,8 +20,8 @@ from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.permissions import BasePermission
 
 from . import settings_store
-from .appconf import auth_enabled
-from .models import ROLES, Account
+from .appconf import auth_enabled, read_only_without_signin
+from .models import ROLE_LABELS, ROLES, Account
 
 
 @dataclass
@@ -39,7 +41,7 @@ class CurrentUser:
 
     @property
     def switcher(self) -> bool:
-        return self.role == "admin" or self.can_switch_accounts
+        return self.at_least("admin") or self.can_switch_accounts
 
     @classmethod
     def from_user(cls, u) -> "CurrentUser":
@@ -48,7 +50,7 @@ class CurrentUser:
 
 def dev_user() -> CurrentUser:
     # A fresh object per request: the allowed-accounts cache must not outlive the request
-    return CurrentUser(id=None, email="local-dev", name="Local dev (sign-in off)", role="admin", can_switch_accounts=True, dev=True)
+    return CurrentUser(id=None, email="local-dev", name="Local dev (sign-in off)", role="superadmin", can_switch_accounts=True, dev=True)
 
 
 def current_from_request(request) -> CurrentUser | None:
@@ -77,16 +79,25 @@ class AppAuthentication(BaseAuthentication):
         return "Session"  # makes DRF answer 401 (not 403) when nobody is signed in
 
 
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
 class IsSignedIn(BasePermission):
     message = "Please sign in"
 
     def has_permission(self, request, view) -> bool:
-        return isinstance(request.user, CurrentUser)
+        if not isinstance(request.user, CurrentUser):
+            return False
+        # An open (no sign-in) hosted server is read-only: no changes without a signed-in person
+        if request.user.dev and read_only_without_signin() and request.method not in SAFE_METHODS:
+            self.message = "This demo is read-only: sign-in is off, so changes aren't allowed"
+            return False
+        return True
 
 
 def require(user: CurrentUser, role: str) -> None:
     if not user.at_least(role):
-        raise PermissionDenied(f"This needs the {role.capitalize()} role or higher")
+        raise PermissionDenied(f"This needs the {ROLE_LABELS[role]} role or higher")
 
 
 # ------------------------------------------------------------------ account access

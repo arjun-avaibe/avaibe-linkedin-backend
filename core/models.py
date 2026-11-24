@@ -17,8 +17,10 @@ FORMAT_CHOICES = [(f, f) for f in FORMATS]
 CHECKPOINT_HOURS = {"1h": 1, "6h": 6, "24h": 24, "48h": 48, "7d": 168}
 CHECKPOINT_CHOICES = [(c, c) for c in CHECKPOINT_HOURS]
 
-ROLES = ["viewer", "editor", "approver", "admin"]  # each includes the rights of the ones before it
-ROLE_CHOICES = [(r, r.capitalize()) for r in ROLES]
+# Each includes the rights of the ones before it. Super admins also manage admins and other super admins.
+ROLES = ["viewer", "editor", "admin", "superadmin"]
+ROLE_LABELS = {"viewer": "Viewer", "editor": "Editor", "admin": "Admin", "superadmin": "Super admin"}
+ROLE_CHOICES = [(r, ROLE_LABELS[r]) for r in ROLES]
 
 PLANNED_STATUSES = ["draft", "approved", "publishing", "published", "failed", "missed"]
 # Formats in the publishing queue, and the tracking format each becomes once posted
@@ -65,7 +67,7 @@ class Post(models.Model):
     targeted = models.BooleanField(null=True, blank=True)
     format = models.CharField(max_length=20, choices=FORMAT_CHOICES, db_index=True)
     # What the post aims for (chosen on Create post); empty for posts from before, imports and hand-added posts
-    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("leads", "Leads"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True, db_index=True)
+    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True, db_index=True)
     topic = models.CharField(max_length=200, null=True, blank=True)
     # True when the topic was guessed from the caption on import and nobody has confirmed it yet
     topic_suggested = models.BooleanField(default=False)
@@ -241,10 +243,10 @@ class User(AbstractBaseUser):
     def __str__(self) -> str:
         return self.name or self.email
 
-    # Django admin access is limited to the Admin role
+    # The raw database screens (/admin) can change anything, roles included, so only super admins get in
     @property
     def is_staff(self) -> bool:
-        return self.is_active and self.role == "admin"
+        return self.is_active and self.role == "superadmin"
 
     @property
     def is_superuser(self) -> bool:
@@ -409,7 +411,7 @@ class PlannedPost(models.Model):
     scheduled_at = models.DateTimeField(null=True, blank=True, db_index=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True)
     # What the post aims for: required on Create post (older drafts may be empty until edited)
-    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("leads", "Leads"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True)
+    goal = models.CharField(max_length=20, choices=[("brand", "Brand awareness"), ("sales", "Sales"), ("engagement", "Engagement")], null=True, blank=True)
     topic = models.CharField(max_length=200, null=True, blank=True)
     industry = models.CharField(max_length=200, null=True, blank=True)
     cta = models.CharField(max_length=300, null=True, blank=True)

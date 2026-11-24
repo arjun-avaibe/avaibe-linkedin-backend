@@ -109,7 +109,7 @@ def callback(request):
 
     user = User.objects.filter(email__iexact=email).first()
     if user is None and email in ADMIN_EMAILS:
-        user = User.objects.create_user(email, name=claims.get("name"), role="admin", can_switch_accounts=True)
+        user = User.objects.create_user(email, name=claims.get("name"), role="superadmin", can_switch_accounts=True)
     if user is None:
         return _to_signin(error="not_invited", email=email)
     if not user.is_active:
