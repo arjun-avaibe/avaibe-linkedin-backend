@@ -901,3 +901,53 @@ class PostChatOpeningTests(TestCase):
         text = " ".join(b.get("text", "") for b in msgs[0]["content"])
         self.assertIn("<untrusted_message>Plan a post for GITEX week</untrusted_message>", text)
         self.assertTrue(any(b.get("cache_control") for b in msgs[0]["content"]))  # the cached opening is still first
+
+
+class PlanImportTests(TestCase):
+    """Planning posts from the Excel template: check first, save only ready rows, never twice."""
+
+    def setUp(self):
+        self.acc = Account.objects.create(name="AVAIBE", kind="company")
+        self.client = APIClient()
+
+    def _file(self, rows):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        wb = openpyxl.load_workbook(io.BytesIO(self.client.get("/api/planner/import/template").content))
+        ws = wb["Posts"]
+        for r in rows:
+            ws.append(r)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return SimpleUploadedFile("plan.xlsx", buf.getvalue())
+
+    def _post(self, rows, confirm=False):
+        q = f"?account_id={self.acc.id}" + ("&confirm=1" if confirm else "")
+        return self.client.post(f"/api/planner/import{q}", {"file": self._file(rows)}, format="multipart")
+
+    def test_template_has_dropdown_sheets(self):
+        with mock.patch("core.auth.auth_enabled", return_value=False):
+            wb = openpyxl.load_workbook(io.BytesIO(self.client.get("/api/planner/import/template").content))
+        self.assertEqual(wb.sheetnames, ["Posts", "How to fill", "Example"])
+        self.assertEqual(wb["Posts"]["C1"].value, "Format")
+
+    def test_check_then_import_ready_rows_once(self):
+        from core.models import PlannedPost
+
+        rows = [
+            ["2030-01-05", "10:30", "Text", "Sales", "VAT season #ERP", "ERP & CRM"],
+            ["2030-01-06", "", "Text", "Sales", "No time given"],
+            ["", "", "Poll", "Engagement", "Vote!", None, None, None, None, None, None, "Best day?", "Mon; Tue; Wed", "3 days"],
+            ["", "", "Image", "", "No goal"],
+        ]
+        with mock.patch("core.auth.auth_enabled", return_value=False):
+            check = self._post(rows).json()
+            self.assertEqual((check["ready"], check["errors"], check["created"]), (2, 2, 0))
+            self.assertEqual(PlannedPost.objects.count(), 0)  # checking never saves
+            done = self._post(rows, confirm=True).json()
+            self.assertEqual(done["created"], 2)
+            poll = PlannedPost.objects.get(format="poll")
+            self.assertEqual((poll.status, poll.details["options"], poll.details["duration"]), ("draft", ["Mon", "Tue", "Wed"], "3d"))
+            self.assertTrue(PlannedPost.objects.get(format="text").ref.startswith("P-"))
+            again = self._post(rows, confirm=True).json()  # the same file twice adds nothing
+            self.assertEqual((again["created"], again["duplicates"]), (0, 2))

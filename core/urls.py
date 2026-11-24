@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from .views import accounts, ai, analytics, auth, calendar, decisions, docs, imports, leads, linkedin, page_audience, planner, posts, settings, team
+from .views import accounts, ai, analytics, auth, calendar, decisions, docs, imports, leads, linkedin, page_audience, plan_import, planner, posts, settings, team
 
 urlpatterns = [
     path("health", auth.health),
@@ -61,6 +61,8 @@ urlpatterns = [
     path("leads/<int:lead_id>", leads.lead_detail),
     path("leads/<int:lead_id>/replied", leads.lead_replied),
     path("planner", planner.planned),
+    path("planner/import/template", plan_import.template),
+    path("planner/import", plan_import.import_plan),
     path("planner/<int:planned_id>", planner.planned_detail),
     path("planner/<int:planned_id>/image", planner.planned_image),
     path("planner/<int:planned_id>/media", planner.planned_media),
